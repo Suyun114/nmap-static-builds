@@ -1,6 +1,9 @@
 name: Nmap Static Build
 
 on:
+  push:
+    branches:
+      - main  # 或者指定其他分支
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
@@ -56,16 +59,19 @@ jobs:
           case "${{ matrix.arch }}" in
             arm64)
               export CC=aarch64-linux-gnu-gcc
+              HOST=aarch64-linux-gnu
               ;;
             armv7)
               export CC=arm-linux-gnueabihf-gcc
+              HOST=arm-linux-gnueabihf
               ;;
             *)
               export CC=gcc
+              HOST=x86_64-linux-gnu
               ;;
           esac
 
-          ./configure --host=${{ matrix.arch }}-linux --without-nmap-update --enable-static --without-zenmap
+          ./configure --host=$HOST --without-nmap-update --enable-static --without-zenmap
           make static
           
           mkdir -p ../release
