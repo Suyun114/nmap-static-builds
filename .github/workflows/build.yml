@@ -43,18 +43,22 @@ jobs:
             docker_image: i386/debian:bullseye
             qemu_arch: i386
             gcc_arch: "-m32"
+            platform: linux/386
           - arch: amd64
             docker_image: debian:bullseye
             qemu_arch: x86_64
             gcc_arch: ""
+            platform: linux/amd64
           - arch: arm64
             docker_image: arm64v8/debian:bullseye
             qemu_arch: aarch64
             gcc_arch: ""
+            platform: linux/arm64
           - arch: armv7
-            docker_image: arm32v7/debian:bullseye
+            docker_image: debian:bullseye
             qemu_arch: arm
             gcc_arch: ""
+            platform: linux/arm/v7
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -67,10 +71,9 @@ jobs:
 
       - name: Build static Nmap for ${{ matrix.arch }}
         run: |
-          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-          
+          # 创建Dockerfile
           cat > Dockerfile << EOF
-          FROM ${{ matrix.docker_image }}
+          FROM --platform=${{ matrix.platform }} ${{ matrix.docker_image }}
           
           RUN apt-get update && apt-get install -y \
               build-essential \
@@ -107,7 +110,8 @@ jobs:
               cp ndiff/ndiff /output/ || echo "ndiff not built"
           EOF
           
-          docker build -t nmap-static-build-${{ matrix.arch }} .
+          # 使用buildx构建跨平台镜像
+          docker buildx build --platform ${{ matrix.platform }} --load -t nmap-static-build-${{ matrix.arch }} .
           
           # 从容器中提取编译好的文件
           docker create --name nmap-container nmap-static-build-${{ matrix.arch }}
