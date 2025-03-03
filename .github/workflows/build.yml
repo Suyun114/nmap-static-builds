@@ -40,43 +40,38 @@ jobs:
         arch: [i686, amd64, arm64, armv7]
         include:
           - arch: i686
-            docker_image: ubuntu:24.04
-            qemu_arch: i386
-            gcc_arch: "-m32"
-            platform: linux/386
+            cross_prefix: ""
+            cross_flags: "-m32"
+            cross_packages: "gcc-multilib g++-multilib"
+            host: "i686-linux-gnu"
           - arch: amd64
-            docker_image: ubuntu:24.04
-            qemu_arch: x86_64
-            gcc_arch: ""
-            platform: linux/amd64
+            cross_prefix: ""
+            cross_flags: ""
+            cross_packages: ""
+            host: "x86_64-linux-gnu"
           - arch: arm64
-            docker_image: ubuntu:24.04
-            qemu_arch: aarch64
-            gcc_arch: ""
-            platform: linux/arm64
+            cross_prefix: "aarch64-linux-gnu-"
+            cross_flags: ""
+            cross_packages: "gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross"
+            host: "aarch64-linux-gnu"
           - arch: armv7
-            docker_image: ubuntu:24.04
-            qemu_arch: arm
-            gcc_arch: ""
-            platform: linux/arm/v7
+            cross_prefix: "arm-linux-gnueabihf-"
+            cross_flags: ""
+            cross_packages: "gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf libc6-dev-armhf-cross"
+            host: "arm-linux-gnueabihf"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
 
       - name: Build static Nmap for ${{ matrix.arch }}
         run: |
           # 创建Dockerfile
           cat > Dockerfile << EOF
-          FROM --platform=${{ matrix.platform }} ${{ matrix.docker_image }}
+          FROM ubuntu:22.04
           
           ENV DEBIAN_FRONTEND=noninteractive
           
+          # 安装基本构建工具和依赖
           RUN apt-get update && apt-get install -y \
               build-essential \
               wget \
@@ -90,12 +85,9 @@ jobs:
               file \
               gcc \
               g++ \
-              make
-          
-          # 为i686架构安装额外的32位支持库
-          RUN if [ "${{ matrix.arch }}" = "i686" ]; then \
-              apt-get install -y gcc-multilib g++-multilib; \
-          fi
+              make \
+              autoconf \
+              ${{ matrix.cross_packages }}
           
           WORKDIR /build
           
@@ -103,12 +95,21 @@ jobs:
           RUN wget https://nmap.org/dist/nmap-${{ needs.check-version.outputs.nmap_version }}.tar.bz2 && \
               tar -xjf nmap-${{ needs.check-version.outputs.nmap_version }}.tar.bz2
           
-          # 编译静态 Nmap
+          # 为交叉编译做准备
           WORKDIR /build/nmap-${{ needs.check-version.outputs.nmap_version }}
           
-          RUN ./configure --without-nmap-update --enable-static --without-zenmap && \
-              make static
-              
+          # 配置和编译静态 Nmap
+          RUN CC="${{ matrix.cross_prefix }}gcc" \
+              CXX="${{ matrix.cross_prefix }}g++" \
+              CFLAGS="${{ matrix.cross_flags }} -static" \
+              CXXFLAGS="${{ matrix.cross_flags }} -static" \
+              LDFLAGS="${{ matrix.cross_flags }} -static" \
+              ./configure --without-nmap-update --enable-static --without-zenmap --host=${{ matrix.host }} && \
+              make -j$(nproc)
+          
+          # 验证静态链接
+          RUN file nmap | grep "statically linked" || echo "Warning: nmap might not be statically linked"
+          
           # 创建发布目录
           RUN mkdir -p /output && \
               cp nmap /output/ && \
@@ -117,8 +118,8 @@ jobs:
               cp ndiff/ndiff /output/ || echo "ndiff not built"
           EOF
           
-          # 使用buildx构建跨平台镜像
-          docker buildx build --platform ${{ matrix.platform }} --load -t nmap-static-build-${{ matrix.arch }} .
+          # 构建Docker镜像
+          docker build -t nmap-static-build-${{ matrix.arch }} .
           
           # 从容器中提取编译好的文件
           docker create --name nmap-container nmap-static-build-${{ matrix.arch }}
