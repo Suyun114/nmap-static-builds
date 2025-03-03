@@ -1,0 +1,156 @@
+name: Build Static Nmap
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天运行一次
+  workflow_dispatch:     # 允许手动触发
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      nmap_version: ${{ steps.check.outputs.nmap_version }}
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Check latest Nmap version
+        id: check
+        run: |
+          LATEST_VERSION=$(curl -s https://nmap.org/dist/ | grep -oP 'nmap-[0-9]+\.[0-9]+(?:\.[0-9]+)?' | sort -V | tail -n 1)
+          NMAP_VERSION=${LATEST_VERSION#nmap-}
+          echo "Latest version: $NMAP_VERSION"
+          echo "nmap_version=$NMAP_VERSION" >> $GITHUB_OUTPUT
+          
+          # 检查此版本是否已发布
+          if gh release view "v$NMAP_VERSION" &> /dev/null; then
+            echo "Version $NMAP_VERSION already released, skipping build"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "New version $NMAP_VERSION detected, will build"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [i686, amd64, arm64, armv7]
+        include:
+          - arch: i686
+            docker_image: i386/debian:bullseye
+            qemu_arch: i386
+            gcc_arch: "-m32"
+          - arch: amd64
+            docker_image: debian:bullseye
+            qemu_arch: x86_64
+            gcc_arch: ""
+          - arch: arm64
+            docker_image: arm64v8/debian:bullseye
+            qemu_arch: aarch64
+            gcc_arch: ""
+          - arch: armv7
+            docker_image: arm32v7/debian:bullseye
+            qemu_arch: arm
+            gcc_arch: ""
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build static Nmap for ${{ matrix.arch }}
+        run: |
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+          
+          cat > Dockerfile << EOF
+          FROM ${{ matrix.docker_image }}
+          
+          RUN apt-get update && apt-get install -y \
+              build-essential \
+              wget \
+              libssl-dev \
+              libssh-dev \
+              libssh2-1-dev \
+              automake \
+              libtool \
+              pkg-config \
+              bzip2 \
+              file
+          
+          WORKDIR /build
+          
+          # 下载和解压 Nmap 源码
+          RUN wget https://nmap.org/dist/nmap-${{ needs.check-version.outputs.nmap_version }}.tar.bz2 && \
+              tar -xjf nmap-${{ needs.check-version.outputs.nmap_version }}.tar.bz2
+          
+          # 编译静态 Nmap
+          WORKDIR /build/nmap-${{ needs.check-version.outputs.nmap_version }}
+          
+          RUN CFLAGS="${{ matrix.gcc_arch }}" CXXFLAGS="${{ matrix.gcc_arch }}" LDFLAGS="${{ matrix.gcc_arch }}" ./configure --without-nmap-update --enable-static --without-zenmap && \
+              make static
+          
+          # 验证静态链接
+          RUN file nmap | grep "statically linked"
+          
+          # 创建发布目录
+          RUN mkdir -p /output && \
+              cp nmap /output/ && \
+              cp nping/nping /output/ || echo "nping not built" && \
+              cp ncat/ncat /output/ || echo "ncat not built" && \
+              cp ndiff/ndiff /output/ || echo "ndiff not built"
+          EOF
+          
+          docker build -t nmap-static-build-${{ matrix.arch }} .
+          
+          # 从容器中提取编译好的文件
+          docker create --name nmap-container nmap-static-build-${{ matrix.arch }}
+          mkdir -p release-files/${{ matrix.arch }}
+          docker cp nmap-container:/output/. release-files/${{ matrix.arch }}/
+          docker rm nmap-container
+          
+          # 打包文件
+          cd release-files/${{ matrix.arch }}
+          tar -czvf ../../nmap-${{ needs.check-version.outputs.nmap_version }}-${{ matrix.arch }}.tar.gz *
+          cd ../..
+          
+          # 显示文件信息
+          ls -la nmap-${{ needs.check-version.outputs.nmap_version }}-${{ matrix.arch }}.tar.gz
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmap-${{ matrix.arch }}
+          path: nmap-${{ needs.check-version.outputs.nmap_version }}-${{ matrix.arch }}.tar.gz
+
+  release:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        run: |
+          # 准备发布文件
+          mkdir -p release-files
+          find artifacts -name "*.tar.gz" -exec cp {} release-files/ \;
+          
+          # 创建 GitHub Release
+          gh release create "v${{ needs.check-version.outputs.nmap_version }}" \
+            --title "v${{ needs.check-version.outputs.nmap_version }}" \
+            --notes "Nmap v${{ needs.check-version.outputs.nmap_version }}" \
+            release-files/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
