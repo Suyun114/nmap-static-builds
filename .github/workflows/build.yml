@@ -1,4 +1,4 @@
-name: Build Static Nmap
+name: Nmap Static Build
 
 on:
   schedule:
@@ -6,163 +6,67 @@ on:
   workflow_dispatch:     # 允许手动触发
 
 jobs:
-  check-version:
+  check-and-build:
     runs-on: ubuntu-latest
-    outputs:
-      nmap_version: ${{ steps.check.outputs.nmap_version }}
-      should_build: ${{ steps.check.outputs.should_build }}
-    steps:
-      - name: Check latest Nmap version
-        id: check
-        run: |
-          LATEST_VERSION=$(curl -s https://nmap.org/dist/ | grep -oP 'nmap-[0-9]+\.[0-9]+(?:\.[0-9]+)?' | sort -V | tail -n 1)
-          NMAP_VERSION=${LATEST_VERSION#nmap-}
-          echo "Latest version: $NMAP_VERSION"
-          echo "nmap_version=$NMAP_VERSION" >> $GITHUB_OUTPUT
-          
-          # 检查此版本是否已发布
-          if gh release view "v$NMAP_VERSION" &> /dev/null; then
-            echo "Version $NMAP_VERSION already released, skipping build"
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          else
-            echo "New version $NMAP_VERSION detected, will build"
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build:
-    needs: check-version
-    if: needs.check-version.outputs.should_build == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [amd64]
-        include:
-          - arch: i686
-            cross_prefix: ""
-            cross_flags: "-m32"
-            cross_packages: "gcc-multilib g++-multilib"
-            host: "i686-linux-gnu"
-          - arch: amd64
-            cross_prefix: ""
-            cross_flags: ""
-            cross_packages: ""
-            host: "x86_64-linux-gnu"
-          - arch: arm64
-            cross_prefix: "aarch64-linux-gnu-"
-            cross_flags: ""
-            cross_packages: "gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross"
-            host: "aarch64-linux-gnu"
-          - arch: armv7
-            cross_prefix: "arm-linux-gnueabihf-"
-            cross_flags: ""
-            cross_packages: "gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf libc6-dev-armhf-cross"
-            host: "arm-linux-gnueabihf"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build static Nmap for ${{ matrix.arch }}
+      - name: Install dependencies
         run: |
-          # 创建Dockerfile
-          cat > Dockerfile << EOF
-          FROM ubuntu:22.04
-          
-          ENV DEBIAN_FRONTEND=noninteractive
-          
-          # 安装基本构建工具和依赖
-          RUN apt-get update && apt-get install -y \
-              build-essential \
-              wget \
-              libssl-dev \
-              libssh-dev \
-              libssh2-1-dev \
-              automake \
-              libtool \
-              pkg-config \
-              bzip2 \
-              file \
-              gcc \
-              g++ \
-              make \
-              autoconf \
-              ${{ matrix.cross_packages }}
-          
-          WORKDIR /build
-          
-          # 下载和解压 Nmap 源码
-          RUN wget https://nmap.org/dist/nmap-${{ needs.check-version.outputs.nmap_version }}.tar.bz2 && \
-              tar -xjf nmap-${{ needs.check-version.outputs.nmap_version }}.tar.bz2
-          
-          # 为交叉编译做准备
-          WORKDIR /build/nmap-${{ needs.check-version.outputs.nmap_version }}
-          
-          # 配置和编译静态 Nmap
-          RUN CC="${{ matrix.cross_prefix }}gcc" \
-              CXX="${{ matrix.cross_prefix }}g++" \
-              CFLAGS="${{ matrix.cross_flags }} -static" \
-              CXXFLAGS="${{ matrix.cross_flags }} -static" \
-              LDFLAGS="${{ matrix.cross_flags }} -static" \
-              ./configure --without-nmap-update --enable-static --without-zenmap --host=${{ matrix.host }} && \
-              make -j$(nproc)
-          
-          # 验证静态链接
-          RUN file nmap | grep "statically linked" || echo "Warning: nmap might not be statically linked"
-          
-          # 创建发布目录
-          RUN mkdir -p /output && \
-              cp nmap /output/ && \
-              cp nping/nping /output/ || echo "nping not built" && \
-              cp ncat/ncat /output/ || echo "ncat not built" && \
-              cp ndiff/ndiff /output/ || echo "ndiff not built"
-          EOF
-          
-          # 构建Docker镜像
-          docker build -t nmap-static-build-${{ matrix.arch }} .
-          
-          # 从容器中提取编译好的文件
-          docker create --name nmap-container nmap-static-build-${{ matrix.arch }}
-          mkdir -p release-files/${{ matrix.arch }}
-          docker cp nmap-container:/output/. release-files/${{ matrix.arch }}/
-          docker rm nmap-container
-          
-          # 打包文件
-          cd release-files/${{ matrix.arch }}
-          tar -czvf ../../nmap-${{ needs.check-version.outputs.nmap_version }}-${{ matrix.arch }}.tar.gz *
-          cd ../..
-          
-          # 显示文件信息
-          ls -la nmap-${{ needs.check-version.outputs.nmap_version }}-${{ matrix.arch }}.tar.gz
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev libssh-dev libssh2-1-dev automake
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: nmap-${{ matrix.arch }}
-          path: nmap-${{ needs.check-version.outputs.nmap_version }}-${{ matrix.arch }}.tar.gz
-
-  release:
-    needs: [check-version, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Create release
+      - name: Check latest Nmap version
+        id: check-version
         run: |
-          # 准备发布文件
-          mkdir -p release-files
-          find artifacts -name "*.tar.gz" -exec cp {} release-files/ \;
+          LATEST_VERSION=$(curl -s https://nmap.org/dist/ | grep -o 'nmap-[0-9.]\+\.tar\.bz2' | sort -V | tail -n 1 | sed 's/nmap-\(.*\)\.tar\.bz2/\1/')
+          echo "Latest Nmap version: $LATEST_VERSION"
+          echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
           
-          # 创建 GitHub Release
-          gh release create "v${{ needs.check-version.outputs.nmap_version }}" \
-            --title "v${{ needs.check-version.outputs.nmap_version }}" \
-            --notes "Nmap v${{ needs.check-version.outputs.nmap_version }}" \
-            release-files/*
+          # 检查此版本是否已经发布
+          if gh release view "v$LATEST_VERSION" &> /dev/null; then
+            echo "Release v$LATEST_VERSION already exists. Skipping build."
+            echo "SKIP_BUILD=true" >> $GITHUB_ENV
+          else
+            echo "New version detected. Will build v$LATEST_VERSION"
+            echo "SKIP_BUILD=false" >> $GITHUB_ENV
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download and build Nmap
+        if: env.SKIP_BUILD == 'false'
+        run: |
+          wget https://nmap.org/dist/nmap-$LATEST_VERSION.tar.bz2
+          tar -xjf nmap-$LATEST_VERSION.tar.bz2
+          cd nmap-$LATEST_VERSION
+          ./configure --without-nmap-update --enable-static --without-zenmap
+          make static
+          
+          # 创建发布目录
+          mkdir -p ../release
+          cp nmap ../release/
+          cp ncat/ncat ../release/ || echo "ncat not built"
+          cp nping/nping ../release/ || echo "nping not built"
+          cp ndiff/ndiff.py ../release/ || echo "ndiff not built"
+          
+          # 打包
+          cd ../release
+          tar -czvf nmap-static-$LATEST_VERSION-linux-x64.tar.gz *
+          
+          echo "Build completed successfully"
+
+      - name: Create Release
+        if: env.SKIP_BUILD == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ env.LATEST_VERSION }}
+          name: Nmap Static Build v${{ env.LATEST_VERSION }}
+          body: |
+            Static build of Nmap v${{ env.LATEST_VERSION }} for Linux x64
+          files: release/nmap-static-${{ env.LATEST_VERSION }}-linux-x64.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
