@@ -40,22 +40,22 @@ jobs:
         arch: [i686, amd64, arm64, armv7]
         include:
           - arch: i686
-            docker_image: i386/debian:bullseye
+            docker_image: ubuntu:22.04
             qemu_arch: i386
             gcc_arch: "-m32"
             platform: linux/386
           - arch: amd64
-            docker_image: debian:bullseye
+            docker_image: ubuntu:22.04
             qemu_arch: x86_64
             gcc_arch: ""
             platform: linux/amd64
           - arch: arm64
-            docker_image: arm64v8/debian:bullseye
+            docker_image: ubuntu:22.04
             qemu_arch: aarch64
             gcc_arch: ""
             platform: linux/arm64
           - arch: armv7
-            docker_image: debian:bullseye
+            docker_image: ubuntu:22.04
             qemu_arch: arm
             gcc_arch: ""
             platform: linux/arm/v7
@@ -75,6 +75,8 @@ jobs:
           cat > Dockerfile << EOF
           FROM --platform=${{ matrix.platform }} ${{ matrix.docker_image }}
           
+          ENV DEBIAN_FRONTEND=noninteractive
+          
           RUN apt-get update && apt-get install -y \
               build-essential \
               wget \
@@ -85,7 +87,15 @@ jobs:
               libtool \
               pkg-config \
               bzip2 \
-              file
+              file \
+              gcc \
+              g++ \
+              make
+          
+          # 为i686架构安装额外的32位支持库
+          RUN if [ "${{ matrix.arch }}" = "i686" ]; then \
+              apt-get install -y gcc-multilib g++-multilib; \
+          fi
           
           WORKDIR /build
           
@@ -98,7 +108,7 @@ jobs:
           
           RUN ./configure --without-nmap-update --enable-static --without-zenmap && \
               make static
-          
+              
           # 创建发布目录
           RUN mkdir -p /output && \
               cp nmap /output/ && \
