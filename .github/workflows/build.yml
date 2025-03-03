@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [i686, amd64, arm64, armv7]
+        arch: [amd64]
         include:
           - arch: i686
             cross_prefix: ""
