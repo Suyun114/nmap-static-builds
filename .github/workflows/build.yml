@@ -18,7 +18,7 @@ jobs:
       matrix:
         arch: [x64, arm64, armv7]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev libssh-dev libssh2-1-dev automake
@@ -80,7 +80,7 @@ jobs:
 
       - name: Upload Artifacts
         if: env.SKIP_BUILD == 'false'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: nmap-static-${{ matrix.arch }}
           path: release/nmap-static-$LATEST_VERSION-linux-${{ matrix.arch }}.tar.gz
