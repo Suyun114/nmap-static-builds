@@ -2,34 +2,30 @@ name: Nmap Static Build
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天运行一次
-  workflow_dispatch:     # 允许手动触发
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libssl-dev libssh-dev libssh2-1-dev automake
+        run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev libssh-dev libssh2-1-dev automake
 
       - name: Check latest Nmap version
         id: check-version
         run: |
           LATEST_VERSION=$(curl -s https://nmap.org/dist/ | grep -o 'nmap-[0-9.]\+\.tar\.bz2' | sort -V | tail -n 1 | sed 's/nmap-\(.*\)\.tar\.bz2/\1/')
-          echo "Latest Nmap version: $LATEST_VERSION"
           echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
           
-          # 检查此版本是否已经发布
           if gh release view "v$LATEST_VERSION" &> /dev/null; then
-            echo "Release v$LATEST_VERSION already exists. Skipping build."
             echo "SKIP_BUILD=true" >> $GITHUB_ENV
           else
-            echo "New version detected. Will build v$LATEST_VERSION"
             echo "SKIP_BUILD=false" >> $GITHUB_ENV
           fi
         env:
@@ -44,18 +40,14 @@ jobs:
           ./configure --without-nmap-update --enable-static --without-zenmap
           make static
           
-          # 创建发布目录
           mkdir -p ../release
           cp nmap ../release/
           cp ncat/ncat ../release/ || echo "ncat not built"
           cp nping/nping ../release/ || echo "nping not built"
           cp ndiff/ndiff.py ../release/ || echo "ndiff not built"
           
-          # 打包
           cd ../release
           tar -czvf nmap-static-$LATEST_VERSION-linux-x64.tar.gz *
-          
-          echo "Build completed successfully"
 
       - name: Create Release
         if: env.SKIP_BUILD == 'false'
@@ -65,8 +57,9 @@ jobs:
           name: Nmap Static Build v${{ env.LATEST_VERSION }}
           body: |
             Static build of Nmap v${{ env.LATEST_VERSION }} for Linux x64
+            
+            Built with: libssl, libssh, libssh2
+            Compiled with: `./configure --without-nmap-update --enable-static --without-zenmap; make static`
           files: release/nmap-static-${{ env.LATEST_VERSION }}-linux-x64.tar.gz
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
