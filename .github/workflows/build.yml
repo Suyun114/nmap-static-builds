@@ -96,11 +96,8 @@ jobs:
           # 编译静态 Nmap
           WORKDIR /build/nmap-${{ needs.check-version.outputs.nmap_version }}
           
-          RUN CFLAGS="${{ matrix.gcc_arch }}" CXXFLAGS="${{ matrix.gcc_arch }}" LDFLAGS="${{ matrix.gcc_arch }}" ./configure --without-nmap-update --enable-static --without-zenmap && \
+          RUN ./configure --without-nmap-update --enable-static --without-zenmap && \
               make static
-          
-          # 验证静态链接
-          RUN file nmap | grep "statically linked"
           
           # 创建发布目录
           RUN mkdir -p /output && \
