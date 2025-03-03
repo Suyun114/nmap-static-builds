@@ -42,13 +42,30 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+
       - name: Download and build Nmap
         if: env.SKIP_BUILD == 'false'
         run: |
           wget https://nmap.org/dist/nmap-$LATEST_VERSION.tar.bz2
           tar -xjf nmap-$LATEST_VERSION.tar.bz2
           cd nmap-$LATEST_VERSION
-          ./configure --without-nmap-update --enable-static --without-zenmap
+          
+          case "${{ matrix.arch }}" in
+            arm64)
+              export CC=aarch64-linux-gnu-gcc
+              ;;
+            armv7)
+              export CC=arm-linux-gnueabihf-gcc
+              ;;
+            *)
+              export CC=gcc
+              ;;
+          esac
+
+          ./configure --host=${{ matrix.arch }}-linux --without-nmap-update --enable-static --without-zenmap
           make static
           
           mkdir -p ../release
