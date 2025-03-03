@@ -40,22 +40,22 @@ jobs:
         arch: [i686, amd64, arm64, armv7]
         include:
           - arch: i686
-            docker_image: ubuntu:22.04
+            docker_image: ubuntu:24.04
             qemu_arch: i386
             gcc_arch: "-m32"
             platform: linux/386
           - arch: amd64
-            docker_image: ubuntu:22.04
+            docker_image: ubuntu:24.04
             qemu_arch: x86_64
             gcc_arch: ""
             platform: linux/amd64
           - arch: arm64
-            docker_image: ubuntu:22.04
+            docker_image: ubuntu:24.04
             qemu_arch: aarch64
             gcc_arch: ""
             platform: linux/arm64
           - arch: armv7
-            docker_image: ubuntu:22.04
+            docker_image: ubuntu:24.04
             qemu_arch: arm
             gcc_arch: ""
             platform: linux/arm/v7
